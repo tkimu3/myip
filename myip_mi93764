@@ -1,0 +1,17 @@
+# written by pptpsetup
+pty "pptp 203.141.142.86 --nolaunchpppd"
+lock
+noauth
+nobsdcomp
+nodeflate
+name mi93764
+remotename myip_mi93764
+ipparam myip_mi93764
+require-mppe-128
+refuse-pap
+refuse-chap
+refuse-mschap
+refuse-eap
+#noccp
+mtu 1000
+mru 1000

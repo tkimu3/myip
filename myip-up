@@ -1,0 +1,103 @@
+#!/bin/sh
+
+FUNC_FILE=myip-func
+CONFIG_DIR=`echo $(cd $(dirname $0) && pwd)`
+ERR=0
+
+if [ ! -e "${CONFIG_DIR}/${FUNC_FILE}" ]; then
+  echo "ERROR: ${FUNC_FILE} file does not exist."
+  exit 1
+fi
+. ${CONFIG_DIR}/${FUNC_FILE}
+
+if [ ! -e "${CONFIG_DIR}/${CONFIG_FILE}" ]; then
+  echo "ERROR: ${CONFIG_FILE} file does not exist."
+  exit 1
+fi
+. ${CONFIG_DIR}/${CONFIG_FILE}
+
+if [ -x "`which netstat 2> /dev/null`" ]; then
+  DEFAULT_GW=`netstat -nr | awk '{ if ($1 == "default" || $1 == "0.0.0.0") print $2 }'`
+else
+  DEFAULT_GW=`ip r | awk '{ if ($1 == "default" || $1 == "0.0.0.0") print $3 }'`
+fi
+
+echo "DEFAULT_GW=${DEFAULT_GW}" > ${CONFIG_DIR}/${GW_SAVE}
+cp -p ${RESOLVE_CONF} ${CONFIG_DIR}/${RESOLVE_SAVE}
+
+PKG_CMD=`get_pkg_cmd`
+if [ "${PKG_CMD}" = "" ]; then
+  echo "ERROR: Does not support this system."
+  exit 1
+fi
+PKG_TYPE="${PKG_CMD##*/}"
+
+for NUM in 1 2 3 4 5
+do
+  if [ "${PKG_TYPE}" = "pkg" ]; then
+    mpd5 -p /var/run/mpd5.pid -b -d ${CONFIG_DIR}
+    RET=$?
+  else
+    pppd call myip_${ID} updetach
+    RET=$?
+  fi
+  [ $RET -eq 0 ] && break
+  echo "ERROR: Failed to connect."
+  echo "Retrying..."
+  sleep 5
+done
+
+for NUM in 1 2 3 4 5 6 7 8 9 10
+do
+  ping -n -c 1 -W 1 ${IPADDR} > /dev/null
+  [ $? -eq 0 ] && break
+done
+
+sed 's/^/#/g' ${CONFIG_DIR}/${RESOLVE_SAVE} > ${RESOLVE_CONF}
+echo "nameserver $DNS1" >> ${RESOLVE_CONF}
+echo "nameserver $DNS2" >> ${RESOLVE_CONF}
+echo "nameserver $DNS3" >> ${RESOLVE_CONF}
+
+if [ -x "`which route 2> /dev/null`" ]; then
+  route del default
+  if [ "${PKG_TYPE}" = "pkg" ]; then
+    route add ${MYIP_SERVER}/32 ${DEFAULT_GW}
+    route add default ${IPADDR}
+    ERR=$?
+  else
+    route add default gw ${IPADDR}
+  fi
+else
+  ip route del default
+  ip route add default via ${IPADDR}
+fi
+
+chk_private ${DEFAULT_GW}
+if [ $? -eq 0 ]; then
+  echo "private IP mode."
+else
+  echo "global IP mode."
+
+  if [ "${CLIENT_GLOBALIP}" = "AUTO" ]; then
+    CLIENT_GLOBALIP=`get_global_ip`
+  fi
+  echo "GLOBAL IP:${CLIENT_GLOBALIP}"
+
+  if [ "${PKG_CMD}" = "pkg" ]; then
+    echo " "
+  else
+    ip rule add from ${CLIENT_GLOBALIP} table 1000 prio 1000
+    ip route add table 1000 default via ${DEFAULT_GW}
+  fi
+  echo "CLIENT_GLOBALIP=${CLIENT_GLOBALIP}" >> ${CONFIG_DIR}/${GW_SAVE}
+fi
+
+if [ $ERR -ne 0 ]; then
+  echo "ERROR: Failed to connect."
+  ${CONFIG_DIR}/${MYIP_DOWN_SCRIPT}
+  exit 1
+fi
+
+echo "done."
+
+exit 0
